@@ -1,7 +1,10 @@
 package com.flipkart.uie.stream.drivers
 
 import com.flipkart.uie.stream.producer.{OrderEvent, Producer}
+import com.flipkart.uie.stream.util.TimeUtils
+import com.flipkart.uie.time.tree.{TimeTree, TimedEvent, Life}
 import com.typesafe.config.ConfigFactory
+import org.joda.time.DateTime
 import org.scalacheck.Gen
 import play.api.libs.json.Json
 
@@ -22,19 +25,31 @@ object OrderEventsProducer {
      // number of different user ids that we want to simulate
     val userCount = config.getInt("producer.user.count")
 
+    val startTimeMonth = config.getInt("producer.start.time.months")
+    val dailyEventCount = config.getInt("producer.daily.event.count")
+
     val producer = new Producer[String]("orderEvent")
     val orderGen = orderEventGenerator(userCount)
     val sizedGen = Gen.listOfN(batchSize, orderGen)
+    val timeIterator = TimeUtils.countedTimeStream(startTimeMonth, dailyEventCount).iterator
 
+    var life = Life[Double](Nil)
     while(true) {
       val orderItems  = sizedGen.sample.get
-      orderItems.foreach(send(producer, _))
+      val timedOrders = orderItems.map(oi => oi.copy(time = timeIterator.next))
+//      timedOrders.foreach {order =>
+//        val event = TimedEvent(order.time, order.orderAmount)
+//         life = TimeTree.insert(life, event)(0.0)((a,b) => a + b)
+//        println(life)
+//      }
+      timedOrders.foreach(send(producer, _))
       Thread.sleep(batchTime)
     }
 
   }
 
   private def send(producer: Producer[String], orderEvent: OrderEvent): Unit = {
+    println(orderEvent)
     implicit  val writes = Json.writes[OrderEvent]
     producer.send(Json.toJson(orderEvent).toString())
   }
@@ -48,7 +63,7 @@ object OrderEventsProducer {
     id <- Gen.oneOf(createUserIds(usersCount).toSeq) //create alphanumeric user id
     orderAmount <- Gen.choose(10.00, 1000.00) //choose order amount
     orderCount <- Gen.choose(1, 30) //choose order count
-    orderId <-orderIdGen //choose order id
+    orderId <- orderIdGen //choose order id
   } yield OrderEvent(id, orderId, orderCount, roundToTwo(orderAmount))
 
   /**
